@@ -40,7 +40,7 @@ func main() {
 		os.Exit(1)
 	}
 
-	Channel, exists := os.LookupEnv("CHANNEL")
+	ReleaseChannel, exists := os.LookupEnv("CHANNEL")
 	if !exists {
 		fmt.Println("E: CHANNEL is not set")
 		os.Exit(1)
@@ -105,46 +105,20 @@ func main() {
 	}
 
 	if manifest.Channel == nil {
-		manifest.Channel = make(map[string]*struct {
-			Version string    `json:"version"`
-			Build   time.Time `json:"build"`
-
-			Artifact map[string]*struct {
-				Binary   string `json:"binary"`
-				Checksum string `json:"checksum"`
-				Patch    string `json:"patch"`
-			} `json:"artifact"`
-		})
+		manifest.Channel = make(map[string]*Channel)
 	}
 
-	if _, ok := manifest.Channel[Channel]; !ok {
-		manifest.Channel[Channel] = &struct {
-			Version string    `json:"version"`
-			Build   time.Time `json:"build"`
-
-			Artifact map[string]*struct {
-				Binary   string `json:"binary"`
-				Checksum string `json:"checksum"`
-				Patch    string `json:"patch"`
-			} `json:"artifact"`
-		}{
-			Artifact: make(map[string]*struct {
-				Binary   string `json:"binary"`
-				Checksum string `json:"checksum"`
-				Patch    string `json:"patch"`
-			}),
+	if _, ok := manifest.Channel[ReleaseChannel]; !ok {
+		manifest.Channel[ReleaseChannel] = &Channel{
+			Artifact: make(map[string]*Artifact),
 		}
 	}
 
-	if _, ok := manifest.Channel[Channel].Artifact[Platform]; !ok {
-		manifest.Channel[Channel].Artifact[Platform] = &struct {
-			Binary   string `json:"binary"`
-			Checksum string `json:"checksum"`
-			Patch    string `json:"patch"`
-		}{}
+	if _, ok := manifest.Channel[ReleaseChannel].Artifact[Platform]; !ok {
+		manifest.Channel[ReleaseChannel].Artifact[Platform] = &Artifact{}
 	}
 
-	manifest.Channel[Channel].Version = Version
+	manifest.Channel[ReleaseChannel].Version = Version
 
 	// create blake2b checksum
 	hasher, _ := blake2b.New256(nil)
@@ -153,7 +127,7 @@ func main() {
 		os.Exit(1)
 	}
 
-	manifest.Channel[Channel].Artifact[Platform].Checksum = hex.EncodeToString(hasher.Sum(nil))
+	manifest.Channel[ReleaseChannel].Artifact[Platform].Checksum = hex.EncodeToString(hasher.Sum(nil))
 
 	_, err = executable.Seek(0, 0)
 	if err != nil {
@@ -161,7 +135,7 @@ func main() {
 		os.Exit(1)
 	}
 
-	_, err = r2.Client.PutObject(context.Background(), Bucket, fmt.Sprintf("%s/artifect/%s", AppID, manifest.Channel[Channel].Artifact[Platform].Checksum), executable, executableStat.Size(), minio.PutObjectOptions{
+	_, err = r2.Client.PutObject(context.Background(), Bucket, fmt.Sprintf("%s/artifect/%s", AppID, manifest.Channel[ReleaseChannel].Artifact[Platform].Checksum), executable, executableStat.Size(), minio.PutObjectOptions{
 		ContentType: "application/octet-stream",
 	})
 	if err != nil {
@@ -171,8 +145,8 @@ func main() {
 
 	fmt.Println("I: Artifact uploaded successfully")
 
-	manifest.Channel[Channel].Artifact[Platform].Binary = fmt.Sprintf("%s/artifect/%s", AppID, manifest.Channel[Channel].Artifact[Platform].Checksum)
-	manifest.Channel[Channel].Build = executableStat.ModTime()
+	manifest.Channel[ReleaseChannel].Artifact[Platform].Binary = fmt.Sprintf("%s/artifect/%s", AppID, manifest.Channel[ReleaseChannel].Artifact[Platform].Checksum)
+	manifest.Channel[ReleaseChannel].Build = executableStat.ModTime()
 
 	marshaledManifest, err := json.Marshal(manifest)
 	if err != nil {
@@ -194,14 +168,19 @@ func main() {
 
 type Manifest struct {
 	// Channel can be "stable" or "beta"
-	Channel map[string]*struct {
-		Version string    `json:"version"`
-		Build   time.Time `json:"build"`
+	Channel map[string]*Channel `json:"channel"`
+}
 
-		Artifact map[string]*struct {
-			Binary   string `json:"binary"`
-			Checksum string `json:"checksum"`
-			Patch    string `json:"patch"`
-		} `json:"artifact"`
-	} `json:"channel"`
+type Channel struct {
+	Version  string               `json:"version"`
+	Build    time.Time            `json:"build"`
+	Artifact map[string]*Artifact `json:"artifact"`
+	Metadata map[string]any       `json:"metadata"`
+}
+
+type Artifact struct {
+	Binary   string         `json:"binary"`
+	Checksum string         `json:"checksum"`
+	Patch    string         `json:"patch"`
+	Metadata map[string]any `json:"metadata"`
 }
